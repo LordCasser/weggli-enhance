@@ -487,8 +487,18 @@ impl QueryBuilder {
     fn build_negative_query(&mut self, c: &mut TreeCursor) -> Result<(), QueryError> {
         let negated_query = c.node().child(2).unwrap();
         // Save a reference to the previous capture so
-        // query.rs can later enforce ordering
-        let before = self.captures.len() as i64 - 1;
+        // query.rs can later enforce ordering.
+        // We skip SubMultiQuery captures because they are intentionally
+        // excluded from match results (see process_match in query.rs),
+        // so they cannot be used for ordering checks.
+        let before = self
+            .captures
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, c)| !matches!(c, Capture::SubMultiQuery(_)))
+            .map(|(i, _)| i as i64)
+            .unwrap_or(-1);
 
         self.id += 1;
         self.negations.push(NegativeQuery {
