@@ -24,7 +24,8 @@ pub struct Args {
     pub output_path: Option<String>,
     pub extensions: Vec<String>,
     pub limit: bool,
-    pub cpp: bool,
+    #[allow(dead_code)]
+    pub cpp: bool, // C++ mode reserved for future cross-platform support
     pub unique: bool,
     pub force_color: bool,
     pub force_query: bool,
@@ -98,7 +99,7 @@ pub fn parse_arguments() -> Args {
         // )
         .arg(
             Arg::with_name("color")
-                .short("C)")
+                .short("C")
                 .long("color")
                 .takes_value(false)
                 .help("Force enable color output."),
@@ -245,8 +246,11 @@ mod help {
  {unified}";
 
     pub const RULES: &str = "\
- A weggli search pattern. weggli's query language closely resembles
- C and C++ with a small number of extra features.
+ A YAML file or directory containing YAML rule files that define search patterns.
+ Each rule file specifies one or more patterns with optional regex constraints.
+ 
+ Patterns use weggli's query language, which closely resembles C and C++ with
+ a small number of extra features.
  
  For example, the pattern '{_ $buf[_]; memcpy($buf,_,_);}' will
  find all calls to memcpy that directly write into a stack buffer.
@@ -259,8 +263,9 @@ mod help {
  $var     Variables. Can be used to write queries that are independent
           of identifiers. Variables match on identifiers, types,
           field names or namespaces. The --unique option
-          optionally enforces that $x != $y != $z. The --regex option can
-          enforce that the variable has to match (or not match) a
+          optionally enforces that $x != $y != $z within a single match.
+          Regex constraints can be specified per-variable in the YAML rules
+          to enforce that the variable must match (or not match) a
           regular expression.
  
  _(..)    Subexpressions. The _(..) wildcard matches on arbitrary
@@ -273,7 +278,7 @@ mod help {
           following sub query. For example, '{not: $fv==NULL; not: $fv!=NULL *$v;}'
           would find pointer dereferences that are not preceded by a NULL check.
 
-strict:   Enable stricter matching. This turns off statement unwrapping and greedy
+ strict:  Enable stricter matching. This turns off statement unwrapping and greedy
           function name matching. For example 'strict: func();' will not match
           on 'if (func() == 1)..' or 'a->func()' anymore. 
  
@@ -284,8 +289,8 @@ strict:   Enable stricter matching. This turns off statement unwrapping and gree
  Similarly, `void func($t $param)` will also match function definitions 
  with multiple parameters. 
  
- Additional patterns can be specified using the --pattern (-p) option. This makes
- it possible to search across functions or type definitions.
+ Multiple patterns within a rule allow searching across functions or type
+ definitions. Use the YAML rules format (see examples) for multi-pattern rules.
  ";
 
     pub const PATH: &str = "\

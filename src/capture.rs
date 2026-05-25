@@ -37,3 +37,17 @@ pub fn add_capture(captures: &mut Vec<Capture>, capture: Capture) -> String {
     captures.push(capture);
     idx.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_capture_returns_increasing_indices() {
+        let mut captures = Vec::new();
+        assert_eq!(add_capture(&mut captures, Capture::Display), "0");
+        assert_eq!(add_capture(&mut captures, Capture::Display), "1");
+        assert_eq!(add_capture(&mut captures, Capture::Check("test".into())), "2");
+        assert_eq!(captures.len(), 3);
+    }
+}

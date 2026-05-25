@@ -61,6 +61,11 @@ impl<'b> QueryResult {
         self.function.start
     }
 
+    /// Return the range of the outermost matched node (usually a function definition).
+    pub fn function_range(&self) -> Range<usize> {
+        self.function.clone()
+    }
+
     /// Returns a colored String representation of the result with `before` + `after`
     /// context lines around each captured node.
     pub fn display(
@@ -239,11 +244,7 @@ impl<'a> DisplayHelper<'a> {
 
         let mut current_offset = 0;
         for h in highlights {
-            let start = if h.start > start_offset {
-                h.start - start_offset
-            } else {
-                0
-            };
+            let start = h.start.saturating_sub(start_offset);
 
             let end = if h.end < start_offset + l.len() {
                 h.end - start_offset
@@ -316,5 +317,170 @@ impl<'a> DisplayHelper<'a> {
         result.truncate(result.len() - t);
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_capture(range: Range<usize>, query_id: usize, capture_idx: u32) -> CaptureResult {
+        CaptureResult {
+            range,
+            query_id,
+            capture_idx,
+        }
+    }
+
+    fn make_vars(vars: Vec<(&str, usize)>) -> FxHashMap<String, usize> {
+        vars.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    #[test]
+    fn test_value_lookup() {
+        let source = "int foo = bar;";
+        let captures = vec![
+            make_capture(4..7, 0, 0), // "foo"
+            make_capture(10..13, 0, 1), // "bar"
+        ];
+        let vars = make_vars(vec![("$x", 0), ("$y", 1)]);
+        let qr = QueryResult::new(captures, vars, 0..14);
+
+        assert_eq!(qr.value("$x", source), Some("foo"));
+        assert_eq!(qr.value("$y", source), Some("bar"));
+        assert_eq!(qr.value("$z", source), None);
+    }
+
+    #[test]
+    fn test_merge_compatible() {
+        let source = "int a = x; int b = y;";
+        let qr1 = QueryResult::new(
+            vec![make_capture(4..5, 0, 0)], // "a"
+            make_vars(vec![("$v", 0)]),
+            0..12,
+        );
+        let qr2 = QueryResult::new(
+            vec![make_capture(15..16, 0, 0)], // "b"
+            make_vars(vec![("$w", 0)]),
+            12..21,
+        );
+
+        // Different variables, should merge fine
+        let merged = qr1.merge(&qr2, source, false);
+        assert!(merged.is_some());
+        let m = merged.unwrap();
+        assert_eq!(m.value("$v", source), Some("a"));
+        assert_eq!(m.value("$w", source), Some("b"));
+    }
+
+    #[test]
+    fn test_merge_incompatible() {
+        let source = "int x = y;";
+        let qr1 = QueryResult::new(
+            vec![make_capture(4..5, 0, 0)], // "x"
+            make_vars(vec![("$v", 0)]),
+            0..10,
+        );
+        let qr2 = QueryResult::new(
+            vec![make_capture(9..10, 1, 0)], // "y"
+            make_vars(vec![("$v", 0)]), // same variable name
+            0..10,
+        );
+
+        // Same variable "$v" assigned to different values -> incompatible
+        let merged = qr1.merge(&qr2, source, false);
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn test_merge_enforce_order() {
+        let source = "first; second;";
+        let qr1 = QueryResult::new(
+            vec![make_capture(0..5, 0, 0)], // "first" byte range
+            make_vars(vec![("$a", 0)]),
+            0..14,
+        );
+        let qr2 = QueryResult::new(
+            vec![make_capture(7..13, 0, 0)], // "second" byte range
+            make_vars(vec![("$b", 0)]),
+            0..14,
+        );
+
+        // Merging qr2 into qr1 with ordering: "second" after "first" -> OK
+        let merged = qr1.merge(&qr2, source, true);
+        assert!(merged.is_some());
+
+        // Merging qr1 into qr2 with ordering: "first" before "second" -> FAIL
+        let merged_reverse = qr2.merge(&qr1, source, true);
+        assert!(merged_reverse.is_none());
+    }
+
+    #[test]
+    fn test_chainable_same_values() {
+        let source1 = "int x = 42;";
+        let source2 = "int y = 42;";
+        let qr1 = QueryResult::new(
+            vec![make_capture(8..10, 0, 0)], // "42"
+            make_vars(vec![("$val", 0)]),
+            0..12,
+        );
+        let qr2 = QueryResult::new(
+            vec![make_capture(8..10, 1, 0)], // "42"
+            make_vars(vec![("$val", 0)]),
+            0..12,
+        );
+
+        // Same variable same value -> chainable
+        assert!(qr1.chainable(source1, &qr2, source2));
+        assert!(qr2.chainable(source2, &qr1, source1));
+    }
+
+    #[test]
+    fn test_chainable_different_values() {
+        let source1 = "int x = 42;";
+        let source2 = "int y = 99;";
+        let qr1 = QueryResult::new(
+            vec![make_capture(8..10, 0, 0)], // "42"
+            make_vars(vec![("$val", 0)]),
+            0..12,
+        );
+        let qr2 = QueryResult::new(
+            vec![make_capture(8..10, 1, 0)], // "99"
+            make_vars(vec![("$val", 0)]),
+            0..12,
+        );
+
+        // Same variable different value -> NOT chainable
+        assert!(!qr1.chainable(source1, &qr2, source2));
+    }
+
+    #[test]
+    fn test_chainable_disjoint_variables() {
+        let source1 = "int a = 1;";
+        let source2 = "int b = 2;";
+        let qr1 = QueryResult::new(
+            vec![make_capture(4..5, 0, 0)],
+            make_vars(vec![("$x", 0)]),
+            0..10,
+        );
+        let qr2 = QueryResult::new(
+            vec![make_capture(4..5, 0, 0)],
+            make_vars(vec![("$y", 0)]),
+            0..10,
+        );
+
+        // Different variables -> always chainable
+        assert!(qr1.chainable(source1, &qr2, source2));
+    }
+
+    #[test]
+    fn test_start_offset() {
+        let qr = QueryResult::new(
+            vec![],
+            FxHashMap::default(),
+            10..50,
+        );
+        assert_eq!(qr.start_offset(), 10);
+        assert_eq!(qr.function_range(), 10..50);
     }
 }

@@ -17,13 +17,11 @@ limitations under the License.
 use std::collections::{hash_map::Keys, HashMap};
 
 use colored::Colorize;
-use query::QueryTree;
 use fancy_regex::Regex;
+use log::info;
+use query::QueryTree;
 use tree_sitter::{Parser, Query, Tree};
 use tree_sitter_c::language;
-
-#[macro_use]
-extern crate log;
 
 pub mod builder;
 mod capture;
@@ -32,65 +30,58 @@ mod util;
 pub mod query;
 pub mod result;
 
-// extern "C" {
-//     fn tree_sitter_c() -> Language;
-// }
+// New modules from refactoring
+pub mod output;
+pub mod pipeline;
+pub mod rules;
+pub mod types;
 
 #[derive(Debug, Clone)]
 pub struct QueryError {
     pub message: String,
 }
 
-/// Helper function to parse an input string
-/// into a tree-sitter tree, using our own slightly modified
-/// C grammar. This function won't fail but the returned
-/// Tree might be invalid and contain errors.
+/// Parse an input source string into a tree-sitter Tree.
+/// This function won't fail but the returned Tree might be invalid and contain errors.
 pub fn parse(source: &str) -> Tree {
     let mut parser = get_parser();
     parser.parse(source, None).unwrap()
 }
+
+/// Parse a search pattern string into a tree-sitter Tree.
+/// (Alias for `parse` — was previously a separate function with a custom grammar.)
 pub fn pattern_parse(source: &str) -> Tree {
-    let mut parser = get_pattern_parser();
-    parser.parse(source, None).unwrap()
+    parse(source)
 }
 
+/// Create a new tree-sitter Parser configured for the C language.
 pub fn get_parser() -> Parser {
     let mut parser = Parser::new();
     if let Err(e) = parser.set_language(&language()) {
-        eprintln!("{}", e);
-        panic!();
-    }
-    parser
-}
-pub fn get_pattern_parser() -> Parser {
-    // let language = unsafe { tree_sitter_c() };
-
-
-    let mut parser = Parser::new();
-    if let Err(e) = parser.set_language(&language()) {
-        eprintln!("{}", e);
+        eprintln!("{e}");
         panic!();
     }
     parser
 }
 
-// Internal helper function to create a new tree-sitter query.
+/// Create a new tree-sitter Query from an S-expression string.
 fn ts_query(sexpr: &str) -> Result<Query, QueryError> {
-    // let language =  unsafe { tree_sitter_c() };
     let language = language();
 
     match Query::new(&language, sexpr) {
         Ok(q) => Ok(q),
         Err(e) => {
-            let errmsg = format!( "Tree sitter query generation failed: {:?}\n {} \n sexpr: {}\n This is a bug! Can't recover :/", e.kind, e.message, sexpr);
+            let errmsg = format!(
+                "Tree sitter query generation failed: {:?}\n {} \n sexpr: {}\n This is a bug! Can't recover :/",
+                e.kind, e.message, sexpr
+            );
             Err(QueryError { message: errmsg })
         }
     }
 }
 
-/// Map from variable names to a positive/negative regex constraint
-/// see --regex
-#[derive(Clone)]
+/// Map from variable names to a positive/negative regex constraint.
+#[derive(Debug, Clone)]
 pub struct RegexMap(HashMap<String, (bool, Regex)>);
 
 impl RegexMap {
@@ -112,13 +103,12 @@ impl RegexMap {
 }
 
 /// Translate the search pattern in `pattern` into a weggli QueryTree.
-/// `is_cpp` enables C++ mode. `force_query` can be used to allow queries with syntax errors.
-/// We support some basic normalization (adding { } around queries) and store the normalized form
-/// in `normalized_patterns` to avoid lifetime issues.
+/// `force_query` can be used to allow queries with syntax errors.
+/// `regex_constraints` is an optional reference to avoid unnecessary cloning.
 pub fn parse_search_pattern(
     pattern: &str,
     force_query: bool,
-    regex_constraints: Option<RegexMap>,
+    regex_constraints: Option<&RegexMap>,
 ) -> Result<QueryTree, QueryError> {
     let mut tree = pattern_parse(pattern);
     let mut p = pattern;
@@ -126,9 +116,8 @@ pub fn parse_search_pattern(
     let temp_pattern;
 
     // Try to fix missing ';' at the end of a query.
-    // weggli 'memcpy(a,b,size)' should work.
     if tree.root_node().has_error() && !pattern.ends_with(';') {
-        temp_pattern = format!("{};", &p);
+        temp_pattern = format!("{p};");
         let fixed_tree = pattern_parse(&temp_pattern);
         if !fixed_tree.root_node().has_error() {
             info!("normalizing query: add missing ;");
@@ -145,10 +134,10 @@ pub fn parse_search_pattern(
         let c = tree.root_node().child(0);
         if let Some(n) = c {
             if !VALID_NODE_KINDS.contains(&n.kind()) {
-                temp_pattern2 = format!("{{{}}}", &p);
+                temp_pattern2 = format!("{{{p}}}");
                 let fixed_tree = pattern_parse(&temp_pattern2);
                 if !fixed_tree.root_node().has_error() {
-                    info!("normalizing query: add {}", "{}");
+                    info!("normalizing query: add {{}}");
                     tree = fixed_tree;
                     p = &temp_pattern2;
                 }
@@ -171,10 +160,9 @@ const VALID_NODE_KINDS: &[&str] = &[
     "class_specifier",
 ];
 
-/// Validates the user supplied search query and quits with an error message in case
-/// it contains syntax errors or isn't rooted in one of `VALID_NODE_KINDS`
-/// If `force` is true, syntax errors are ignored. Returns a cursor to the
-/// root node.
+/// Validates the user supplied search query and returns an error message if
+/// it contains syntax errors or isn't rooted in one of `VALID_NODE_KINDS`.
+/// If `force` is true, syntax errors are ignored.
 fn validate_query<'a>(
     tree: &'a Tree,
     query: &str,

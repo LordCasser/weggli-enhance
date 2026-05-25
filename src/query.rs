@@ -253,7 +253,7 @@ impl QueryTree {
                                 }
                             }
                             Err(e) => {
-                                panic!("regex error:\n{}",e)
+                                panic!("regex error:\n{e}")
                             }
                         }
 
