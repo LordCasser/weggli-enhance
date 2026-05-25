@@ -271,8 +271,15 @@ impl QueryTree {
                     // println!("c:{}|{},t: {}",c.node.kind(),c.node.child_count(),t.captures.len());
                     subqueries.push((t, c));
                 }
-                Capture::CallExpQuery(len) => {
-                    if c.node.child_count() != *len {
+                Capture::CallExpQuery(len, minimum) => {
+                    let actual = c.node.named_child_count();
+                    if *minimum {
+                        // Variadic mode (__ present): at least `len` arguments
+                        if actual < *len {
+                            return vec![];
+                        }
+                    } else if actual != *len {
+                        // Exact mode: must have exactly `len` arguments
                         return vec![];
                     }
                 }

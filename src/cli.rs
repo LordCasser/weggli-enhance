@@ -259,6 +259,13 @@ mod help {
  supports the following features:
  
  _        Wildcard. Will match on any AST node. 
+
+ __       Variadic wildcard (argument list only). Matches zero or more
+          arguments at this position. When present, argument count
+          checking switches from exact to minimum mode.
+          Example: `$f(__, $x, __)` matches `$f` where `$x` is a
+          direct argument at any position. Supports multiple `__` in
+          a single argument list for multi-parameter scenarios.
  
  $var     Variables. Can be used to write queries that are independent
           of identifiers. Variables match on identifiers, types,

@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag or ref to build from (leave empty for latest)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Linux ---
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_name: weggli-enhance-linux-amd64
+            binary_name: weggli-enhance
+            cross: false
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_name: weggli-enhance-linux-arm64
+            binary_name: weggli-enhance
+            cross: true
+
+          - target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_name: weggli-enhance-linux-riscv64
+            binary_name: weggli-enhance
+            cross: true
+
+          # --- macOS ---
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset_name: weggli-enhance-macos-arm64
+            binary_name: weggli-enhance
+            cross: false
+
+          # --- Windows ---
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_name: weggli-enhance-windows-amd64
+            binary_name: weggli-enhance.exe
+            cross: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (for cross-compilation)
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      # ── Unix packaging (Linux / macOS) ──────────────────────────
+      - name: Package artifact (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+          strip "$BIN" 2>/dev/null || true
+          cp "$BIN" "${{ matrix.asset_name }}"
+          tar -czf "${{ matrix.asset_name }}.tar.gz" "${{ matrix.asset_name }}"
+          sha256sum "${{ matrix.asset_name }}.tar.gz" > "${{ matrix.asset_name }}.tar.gz.sha256"
+
+      # ── Windows packaging ───────────────────────────────────────
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bin = "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+          Copy-Item -Path $bin -Destination "${{ matrix.asset_name }}.exe"
+          Compress-Archive -Path "${{ matrix.asset_name }}.exe" -DestinationPath "${{ matrix.asset_name }}.zip"
+          $hash = (Get-FileHash -Path "${{ matrix.asset_name }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.asset_name }}.zip" | Out-File -Encoding ascii -FilePath "${{ matrix.asset_name }}.zip.sha256"
+
+      # ── Upload ──────────────────────────────────────────────────
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.asset_name }}.tar.gz
+            ${{ matrix.asset_name }}.tar.gz.sha256
+            ${{ matrix.asset_name }}.zip
+            ${{ matrix.asset_name }}.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

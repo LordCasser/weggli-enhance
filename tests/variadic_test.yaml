@@ -1,0 +1,59 @@
+issue: "variadic-test"
+description: "Test variadic wildcard __ feature"
+rules:
+  # Test 1: __ around a single parameter — match at any position
+  - reason: "variadic-any-position"
+    regexes: []
+    patterns:
+      - |
+        _ $func(_* $param) {
+            $func2(__, $param, __);
+        }
+
+  # Test 2: __ with multiple fixed arguments — ordering preserved
+  - reason: "variadic-ordering-a-before-b"
+    regexes: []
+    patterns:
+      - |
+        _ order_test(_* a, _* b) {
+            ordered_func(a, __, b);
+        }
+
+  # Test 3: exact match (no __) — should ONLY match exact arg count
+  - reason: "exact-2-args"
+    regexes: []
+    patterns:
+      - |
+        func2args(_, _);
+
+  # Test 4: exact match — should NOT match 3 or 4 args
+  - reason: "exact-3-args"
+    regexes: []
+    patterns:
+      - |
+        func3args(_, _, _);
+
+  # Test 5: __ should NOT match sub-expressions
+  - reason: "variadic-no-subexpr-match"
+    regexes: []
+    patterns:
+      - |
+        _ subexpr_test(_* p) {
+            func(__, p, __);
+        }
+
+  # Test 6: __ only — matches any function call regardless of args
+  - reason: "variadic-only"
+    regexes: []
+    patterns:
+      - |
+        func_a(__);
+
+  # Test 7: Multiple __ — multi-param any-position
+  - reason: "variadic-multi-param"
+    regexes: []
+    patterns:
+      - |
+        _ multi_func(_* p) {
+            $f(__, p, __);
+        }

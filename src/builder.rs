@@ -410,9 +410,33 @@ impl QueryBuilder {
 
         // Default case. Handle everything else
 
+        // Pre-scan argument_list for variadic wildcard `__` (double underscore).
+        // When present, anchoring is disabled and the argument count check
+        // switches from exact to minimum mode.
+        let mut has_variadic = false;
+        let mut variadic_count: usize = 0;
+        if kind == "argument_list" {
+            let mut scan = c.node().walk();
+            if scan.goto_first_child() {
+                loop {
+                    if scan.node().is_named()
+                        && scan.node().kind() == "identifier"
+                        && self.get_text(&scan.node()) == "__"
+                    {
+                        has_variadic = true;
+                        variadic_count += 1;
+                    }
+                    if !scan.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+        }
+
         // Enforce ordering of arguments by anchoring them to each other if the user specified
-        // more than one arg.
-        let anchoring = kind == "argument_list" && c.node().named_child_count() > 1;
+        // more than one arg. Anchoring is disabled when variadic `__` is present.
+        let anchoring =
+            kind == "argument_list" && c.node().named_child_count() > 1 && !has_variadic;
 
         let is_funcdef = kind == "function_definition";
 
@@ -448,6 +472,17 @@ impl QueryBuilder {
                 }
             // Argument Lists for function calls
             } else if c.node().is_named() {
+                // Skip variadic wildcard `__` in argument_list context.
+                // It matches zero or more arguments and produces no tree-sitter query node.
+                if kind == "argument_list"
+                    && c.node().kind() == "identifier"
+                    && self.get_text(&c.node()) == "__"
+                {
+                    if !c.goto_next_sibling() {
+                        break;
+                    }
+                    continue;
+                }
                 if anchoring {
                     result += " .";
                 }
@@ -474,8 +509,14 @@ impl QueryBuilder {
 
         debug!("generated query: {}", result);
         if kind == "argument_list" {
-            // info!("list {}",result);
-            let capture = Capture::CallExpQuery(c.node().child_count());
+            let named_count = c.node().named_child_count();
+            let capture = if has_variadic {
+                // Minimum mode: only non-variadic arguments count
+                Capture::CallExpQuery(named_count - variadic_count, true)
+            } else {
+                // Exact mode: all arguments must match
+                Capture::CallExpQuery(named_count, false)
+            };
             Ok(result + ") @" + &add_capture(&mut self.captures, capture))
         } else {
             Ok(result + ")")

@@ -27,7 +27,10 @@ pub enum Capture {
     Variable(String, Option<(bool, Regex)>),
     Check(String),
     Number(i128),
-    CallExpQuery(usize),
+    /// (argument_count, minimum_mode)
+    /// When minimum_mode is false: exact match (source_count == argument_count)
+    /// When minimum_mode is true: source_count >= argument_count (variadic `__` present)
+    CallExpQuery(usize, bool),
     SubWildQuery(Box<crate::query::QueryTree>),
     SubMultiQuery(Box<crate::query::QueryTree>),
 }
